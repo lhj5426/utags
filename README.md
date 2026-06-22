@@ -5,7 +5,7 @@
 
 为 自己常用网站添加标签
 
-配合 自己 使用AI 开发的 扩展 可以很方便的管理标签这里的标签
+配合 自己 使用AI 开发的 扩展 可以很方便的管理这里的标签
 
 https://github.com/lhj5426/RightClick-Link-Collector
 
