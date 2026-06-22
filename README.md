@@ -1,6 +1,12 @@
+# 妈妈再也不担心我不知道哪个下载过哪个没下载过了
+
 使用AI 魔改
 
 为 自己常用网站添加标签
+
+配合 自己 使用AI 开发的 扩展 可以很方便的管理标签这里的标签
+
+https://github.com/lhj5426/RightClick-Link-Collector
 
 目前对 anime-sharing.com AS论坛
 
@@ -43,5 +49,5 @@ Lv+：level-plus.net
 
 添加打标签功能
 
-# 妈妈再也不担心我不知道哪个下载过哪个没下载过了
+
 
