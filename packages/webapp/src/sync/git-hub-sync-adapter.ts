@@ -15,6 +15,10 @@ import type {
   SyncServiceConfig,
 } from './types.js'
 import { buildSyncPath } from './sync-path-builder.js'
+import {
+  fetchWithDownloadProgress,
+  fetchWithUploadProgress,
+} from './progress-utils.js'
 
 const GITHUB_API_BASE_URL = appConfig.githubApiUrl
 
@@ -168,7 +172,9 @@ export class GitHubSyncAdapter implements SyncAdapter<
    *          Returns undefined for data if the file doesn't exist or an error occurs.
    * @throws Error if the adapter is not initialized or if there's an API error during download.
    */
-  public async download(): Promise<{
+  public async download(
+    onProgress?: (bytesReceived: number, bytesTotal: number) => void
+  ): Promise<{
     data: string | undefined
     remoteMeta: SyncMetadata | undefined
   }> {
@@ -190,16 +196,20 @@ export class GitHubSyncAdapter implements SyncAdapter<
     const url = `${GITHUB_API_BASE_URL}/repos/${this.target.repo}/git/blobs/${remoteMeta.sha}`
 
     try {
-      const response = await fetch(url, {
-        signal: this.abortController?.signal,
-        headers: {
-          Authorization: `token ${this.credentials.token}`,
-          // Request raw content; GitHub's blobs API returns base64 by default if this is not set correctly.
-          // 'application/vnd.github.v3.raw' or 'Accept: application/octet-stream' for raw
-
-          Accept: 'application/vnd.github.v3.raw',
+      const { text: rawData, response } = await fetchWithDownloadProgress(
+        url,
+        {
+          signal: this.abortController?.signal,
+          headers: {
+            Authorization: `token ${this.credentials.token}`,
+            Accept: 'application/vnd.github.v3.raw',
+          },
         },
-      })
+        onProgress ||
+          (() => {
+            // noop
+          })
+      )
 
       if (response.status === 404) {
         // This case should ideally be caught by getRemoteMetadata, but as a safeguard:
@@ -219,7 +229,6 @@ export class GitHubSyncAdapter implements SyncAdapter<
         )
       }
 
-      const rawData = await response.text()
       // Data fetched with 'application/vnd.github.v3.raw' is plain text.
       // If it were base64, it would need: atob(jsonData.content)
       return { data: rawData, remoteMeta }
@@ -248,7 +257,8 @@ export class GitHubSyncAdapter implements SyncAdapter<
    */
   public async upload(
     data: string,
-    expectedRemoteMeta?: SyncMetadata
+    expectedRemoteMeta?: SyncMetadata,
+    onProgress?: (bytesSent: number, bytesTotal: number) => void
   ): Promise<SyncMetadata> {
     if (!this.initialized) {
       throw new Error('[GitHubSyncAdapter] Adapter not initialized.')
@@ -277,18 +287,27 @@ export class GitHubSyncAdapter implements SyncAdapter<
       body.sha = expectedRemoteMeta.sha // Required for updating an existing file
     }
 
-    try {
-      const response = await fetch(url, {
-        method: 'PUT',
-        signal: this.abortController?.signal,
-        headers: {
-          Authorization: `token ${this.credentials.token}`,
+    const requestBody = JSON.stringify(body)
 
-          Accept: 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json',
+    try {
+      const response = await fetchWithUploadProgress(
+        url,
+        {
+          method: 'PUT',
+          signal: this.abortController?.signal,
+          headers: {
+            Authorization: `token ${this.credentials.token}`,
+
+            Accept: 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json',
+          },
         },
-        body: JSON.stringify(body),
-      })
+        requestBody,
+        onProgress ||
+          (() => {
+            // noop
+          })
+      )
 
       if (!response.ok) {
         let errorBody = ''

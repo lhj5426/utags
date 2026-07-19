@@ -47,6 +47,8 @@ export class SyncManager extends EventEmitter<SyncEvents> {
   private currentSettings!: SyncSettings
   private currentSyncStatus: SyncStatus = { type: 'idle' } // Updated initial state
   private readonly unsubscriber: Unsubscriber
+  private syncPullBytes = 0
+  private syncPushBytes = 0
   private readonly defaultMergeStrategy: MergeStrategy = {
     meta: 'merge',
     tags: 'union',
@@ -593,7 +595,17 @@ export class SyncManager extends EventEmitter<SyncEvents> {
         `[SyncManager] Downloading remote data for ${serviceConfig.name}...`
       )
       const { data: remoteDataString, remoteMeta: downloadRemoteSyncMeta } =
-        await adapter.download()
+        await adapter.download((received, total) => {
+          this.syncPullBytes = received
+          const pct =
+            total > 0 ? Math.round((received / total) * 100) : 50
+          this.updateStatus({
+            type: 'downloading',
+            progress: pct,
+            bytesTransferred: received,
+            bytesTotal: total,
+          })
+        })
 
       // Validate data integrity if this is not the first sync
       if (
@@ -997,7 +1009,18 @@ export class SyncManager extends EventEmitter<SyncEvents> {
         // console.log('Uploading', prettyPrintJson(bookmarksStore))
         const newRemoteMeta = await adapter.upload(
           prettyPrintJson(normalizeBookmarkData(bookmarksStore)),
-          remoteSyncMeta // Pass metadata for conditional upload
+          remoteSyncMeta, // Pass metadata for conditional upload
+          (sent, total) => {
+            this.syncPushBytes = sent
+            const pct =
+              total > 0 ? Math.round((sent / total) * 100) : 50
+            this.updateStatus({
+              type: 'uploading',
+              progress: pct,
+              bytesTransferred: sent,
+              bytesTotal: total,
+            })
+          }
         )
 
         const updatedServiceConfig: SyncServiceConfig = {
@@ -1172,11 +1195,17 @@ export class SyncManager extends EventEmitter<SyncEvents> {
       console.log(
         `[SyncManager] Merge history saved. Total entries: ${existingHistory.length}`
       )
-    } catch (error) {
-      console.warn(
-        '[SyncManager] Failed to persist merge history to localStorage:',
-        error
-      )
+    } catch (error: any) {
+      // Quota exceeded is expected when sync data is large — silently
+      // skip.  Other errors still get logged.
+      if (error?.name === 'QuotaExceededError') {
+        // noop
+      } else {
+        console.warn(
+          '[SyncManager] Failed to persist merge history to localStorage:',
+          error
+        )
+      }
     }
   }
 
@@ -1232,6 +1261,7 @@ export class SyncManager extends EventEmitter<SyncEvents> {
       const updatedServiceConfig: SyncServiceConfig = {
         ...serviceConfig,
         lastPullTimestamp: currentSyncTimestamp,
+        lastPullBytes: this.syncPullBytes,
         lastDataChangeTimestamp: hasChangesForLocal
           ? currentSyncTimestamp
           : serviceConfig.lastDataChangeTimestamp,
@@ -1387,12 +1417,24 @@ export class SyncManager extends EventEmitter<SyncEvents> {
 
       const newRemoteMeta = await adapter.upload(
         prettyPrintJson(normalizeBookmarkData(bookmarksStore)),
-        remoteSyncMeta
+        remoteSyncMeta,
+        (sent, total) => {
+          this.syncPushBytes = sent
+          const pct =
+            total > 0 ? Math.round((sent / total) * 100) : 50
+          this.updateStatus({
+            type: 'uploading',
+            progress: pct,
+            bytesTransferred: sent,
+            bytesTotal: total,
+          })
+        }
       )
 
       const updatedServiceConfig: SyncServiceConfig = {
         ...serviceConfig,
         lastPushTimestamp: currentSyncTimestamp,
+        lastPushBytes: this.syncPushBytes,
         lastDataChangeTimestamp: currentSyncTimestamp,
         lastSyncMeta: newRemoteMeta,
         lastSyncOperation: 'push',

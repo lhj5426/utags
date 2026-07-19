@@ -110,35 +110,16 @@
     }
   }
 
-  function formatLastSyncTime(
-    timestamp?: number,
-    serviceType?: string
-  ): string {
-    if (!timestamp) {
-      return '从未同步'
-    }
+  function formatLastSyncTime(timestamp?: number): string {
+    if (!timestamp) return '从未同步'
+    return new Date(timestamp).toLocaleString()
+  }
 
-    const date = new Date(timestamp)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffSeconds = Math.floor(diffMs / 1000)
-    const diffMinutes = Math.floor(diffMs / (1000 * 60))
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffMs < 0) {
-      return '时间错误'
-    }
-
-    if (diffSeconds < 60) {
-      return `${diffSeconds} 秒前`
-    }
-    if (diffMinutes < 60) {
-      const remainingSeconds = diffSeconds % 60
-      return `${diffMinutes} 分 ${remainingSeconds} 秒前`
-    }
-
-    return date.toLocaleString()
+  function formatBytes(bytes?: number): string {
+    if (!bytes || bytes <= 0) return ''
+    if (bytes < 1024) return ` · ${bytes} B`
+    if (bytes < 1048576) return ` · ${(bytes / 1024).toFixed(1)} KB`
+    return ` · ${(bytes / 1048576).toFixed(2)} MB`
   }
 
   function handleSetAsActive(serviceId: string) {
@@ -146,7 +127,15 @@
   }
 
   /** Map sync status type to a Chinese label, taking the operation into account. */
-  function statusLabel(type: string, operation: string | undefined): string {
+  function statusLabel(
+    type: string,
+    operation: string | undefined,
+    progress: number
+  ): string {
+    // Show "完成" once we hit 100%, regardless of underlying status type
+    if (progress >= 100 && type !== 'error' && type !== 'conflict') {
+      return '完成'
+    }
     const stageMap: Record<string, string> = {
       initializing: '准备中',
       checking: '检查远程',
@@ -247,33 +236,16 @@
               </div>
               <div class="mt-1 flex flex-col gap-0.5 text-xs text-gray-400 dark:text-gray-500">
                 <span>
-                  上次同步: {formatLastSyncTime(
-                    service.lastSyncTimestamp,
-                    service.type
-                  )}
+                  上次同步: {formatLastSyncTime(service.lastSyncTimestamp)}
                 </span>
-                {#if service.lastSyncOperation === 'pull' && service.lastPullTimestamp}
+                {#if service.lastPullTimestamp}
                   <span class="text-emerald-600 dark:text-emerald-400">
-                    上次下载完成: {formatLastSyncTime(
-                      service.lastPullTimestamp,
-                      service.type
-                    )}
+                    上次下载: {formatLastSyncTime(service.lastPullTimestamp)}{formatBytes(service.lastPullBytes)}
                   </span>
                 {/if}
-                {#if service.lastSyncOperation === 'push' && service.lastPushTimestamp}
+                {#if service.lastPushTimestamp}
                   <span class="text-blue-600 dark:text-blue-400">
-                    上次上传完成: {formatLastSyncTime(
-                      service.lastPushTimestamp,
-                      service.type
-                    )}
-                  </span>
-                {/if}
-                {#if service.lastSyncOperation === 'sync' && service.lastSyncTimestamp}
-                  <span class="text-indigo-600 dark:text-indigo-400">
-                    上次同步完成: {formatLastSyncTime(
-                      service.lastSyncTimestamp,
-                      service.type
-                    )}
+                    上次上传: {formatLastSyncTime(service.lastPushTimestamp)}{formatBytes(service.lastPushBytes)}
                   </span>
                 {/if}
               </div>
@@ -334,17 +306,22 @@
                   {:else}
                     <RefreshCw size={12} class="animate-spin" />
                   {/if}
-                  {statusLabel($syncProgress.type, op)}
+                  {statusLabel($syncProgress.type, op, $syncProgress.progress)}
                 </span>
-                <span>{$syncProgress.progressHint}%</span>
+                <span class="flex items-center gap-2">
+                  <span>{$syncProgress.progress}%</span>
+                  {#if $syncProgress.speed && $syncProgress.speed !== '--'}
+                    <span class="opacity-70">{$syncProgress.speed}</span>
+                  {/if}
+                </span>
               </div>
               <div
                 class={'h-2 w-full overflow-hidden rounded-full ' +
                   opClasses.track}>
                 <div
-                  class={'h-full rounded-full transition-all duration-500 ease-out ' +
+                  class={'h-full rounded-full transition-all duration-200 ease-linear ' +
                     opClasses.bar}
-                  style="width: {$syncProgress.progressHint}%"></div>
+                  style="width: {$syncProgress.progress}%"></div>
               </div>
             </div>
           {/if}

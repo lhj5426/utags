@@ -2,105 +2,102 @@ import { writable } from 'svelte/store'
 import { syncManager } from '../sync/sync-manager.js'
 import type { SyncStatus } from '../sync/types.js'
 
-/**
- * Global store for tracking the currently syncing service
- * This allows the sync status to persist even when the SyncSettingsModal is closed
- */
 export const currentSyncingService = writable<string | undefined>(undefined)
 
-/**
- * Which kind of operation triggered the current sync, so the UI can
- * correctly label the progress bar (e.g. "下载中" vs "上传中") instead
- * of guessing from the underlying status type.
- */
 export const currentSyncOperation = writable<
   'pull' | 'push' | 'sync' | undefined
 >(undefined)
 
-/**
- * Detailed progress of the current sync operation for progress-bar UIs.
- * `null` when idle; otherwise carries the status type and an optional
- * percent hint so the UI can show a meaningful progress indicator instead
- * of just a bare spinner.
- *
- * The status type maps to a rough stage:
- *   initializing -> 5%, checking -> 15%, downloading -> 30%,
- *   merging -> 60%, uploading -> 80%, success -> 100%
- */
+// ---- Speed tracking -------------------------------------------------------
+let lastBytes = 0
+let lastSpeedTime = 0
+
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) return `${Math.max(1, bytesPerSec)} B/s`
+  if (bytesPerSec < 1048576) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
+  return `${(bytesPerSec / 1048576).toFixed(1)} MB/s`
+}
+
+// ---- Progress store -------------------------------------------------------
 export const syncProgress = writable<{
   type: SyncStatus['type']
-  progressHint: number
+  progress: number // 0-100 real percent
+  speed: string // e.g. "1.2 MB/s"
 } | null>(null)
 
-const PROGRESS_HINT_MAP: Record<string, number> = {
-  idle: 0,
-  initializing: 5,
-  checking: 15,
-  downloading: 30,
-  merging: 60,
-  uploading: 80,
-  success: 100,
-}
-
-// Set up global listeners for sync events
 function initializeSyncListeners() {
-  // Handle sync initializing event
-  const onSyncInitializing = (data: { serviceId: string }) => {
-    console.log('[sync-status-store] sync initializing', data.serviceId)
+  syncManager.on('syncInitializing', (data: { serviceId: string }) => {
     currentSyncingService.set(data.serviceId)
-  }
+  })
 
-  // Handle sync start event
-  const onSyncStart = (data: { serviceId: string }) => {
-    console.log('[sync-status-store] sync start', data.serviceId)
+  syncManager.on('syncStart', (data: { serviceId: string }) => {
     currentSyncingService.set(data.serviceId)
-  }
+    lastBytes = 0
+    lastSpeedTime = Date.now()
+  })
 
-  // Handle sync end event
-  const onSyncEnd = (data: { serviceId: string }) => {
-    console.log('[sync-status-store] sync end', data.serviceId)
-    currentSyncingService.update((current) => {
-      if (current === data.serviceId) {
-        return undefined
+  syncManager.on('syncEnd', (data: { serviceId: string }) => {
+    currentSyncingService.update((c) =>
+      c === data.serviceId ? undefined : c
+    )
+  })
+
+  syncManager.on(
+    'statusChange',
+    (status: SyncStatus & { bytesTransferred?: number; bytesTotal?: number }) => {
+      if (
+        status.type === 'error' ||
+        status.type === 'conflict' ||
+        status.type === 'disabled'
+      ) {
+        syncProgress.set(null)
+        lastBytes = 0
+        return
       }
 
-      return current
-    })
-    // The caller (handlePull / handlePush / handleSyncNow) is responsible
-    // for clearing `currentSyncOperation` because it owns the operation type.
-  }
+      if (status.type === 'success') {
+        // Keep 100 % visible for a moment so the user sees "完成"
+        syncProgress.set({
+          type: status.type as SyncStatus['type'],
+          progress: 100,
+          speed: '--',
+        })
+        setTimeout(() => {
+          syncProgress.update((v) => (v?.type === 'success' ? null : v))
+        }, 1500)
+        lastBytes = 0
+        return
+      }
 
-  // Handle status change for progress tracking
-  const onStatusChange = (status: SyncStatus) => {
-    if (
-      status.type === 'idle' ||
-      status.type === 'success' ||
-      status.type === 'error' ||
-      status.type === 'conflict' ||
-      status.type === 'disabled'
-    ) {
-      syncProgress.set(null)
-    } else {
+      if (status.type === 'idle') {
+        syncProgress.set(null)
+        lastBytes = 0
+        return
+      }
+
+      const now = Date.now()
+      const elapsed = (now - lastSpeedTime) / 1000
+      let speed = '--'
+
+      if (
+        elapsed > 0.05 &&
+        typeof status.bytesTransferred === 'number' &&
+        status.bytesTransferred > lastBytes
+      ) {
+        const deltaBytes = status.bytesTransferred - lastBytes
+        speed = formatSpeed(deltaBytes / elapsed)
+      }
+
+      lastBytes = status.bytesTransferred ?? lastBytes
+      lastSpeedTime = now
+
       syncProgress.set({
         type: status.type,
-        progressHint:
-          PROGRESS_HINT_MAP[status.type] ??
-          (status.type === 'downloading' || status.type === 'uploading'
-            ? 50
-            : 10),
+        progress: status.progress ?? 0,
+        speed,
       })
     }
-  }
-
-  // Register event listeners
-  syncManager.on('syncInitializing', onSyncInitializing)
-  syncManager.on('syncStart', onSyncStart)
-  syncManager.on('syncEnd', onSyncEnd)
-  syncManager.on('statusChange', onStatusChange)
-
-  // No need to return cleanup function as this is a global store
-  // that should listen for events throughout the application lifecycle
+  )
 }
 
-// Initialize the listeners
 initializeSyncListeners()

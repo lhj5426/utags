@@ -35,6 +35,8 @@ export type SyncServiceConfig<
   lastDataChangeTimestamp?: number // Timestamp of the last synchronization that detected data changes (local or remote)
   lastPullTimestamp?: number // Timestamp of the last pull-only operation (for UI labelling)
   lastPushTimestamp?: number // Timestamp of the last push-only operation (for UI labelling)
+  lastPullBytes?: number // Byte count of last pull (for UI display)
+  lastPushBytes?: number // Byte count of last push (for UI display)
   lastSyncLocalDataHash?: string // Hash of local data at the time of last successful sync
   lastSyncMeta?: SyncMetadata // Metadata of the last successful sync
   lastSyncOperation?: 'pull' | 'push' | 'sync' // Which operation produced the last independent action (for UI labelling)
