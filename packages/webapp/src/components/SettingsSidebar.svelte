@@ -317,14 +317,14 @@
         <div class="setting-group gap-y-6">
           <h3
             class="mb-4 text-xl font-semibold text-gray-900 dark:text-gray-100">
-            Sync Settings
+            同步设置
           </h3>
           <div class="gap-y-4">
             <div class="flex items-center justify-between px-1 py-1.5">
               <button
                 class="flex items-center gap-3 text-gray-700 hover:text-blue-600 dark:text-gray-300"
                 onclick={() => (showSyncSettings = true)}>
-                <span>⚙️ Configure Sync Services</span>
+                <span>⚙️ 配置同步服务</span>
               </button>
             </div>
           </div>

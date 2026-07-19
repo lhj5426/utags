@@ -30,8 +30,8 @@
     name: '',
     type: 'github',
     enabled: true,
-    autoSyncEnabled: true,
-    autoSyncOnChanges: true,
+    autoSyncEnabled: false,
+    autoSyncOnChanges: false,
     autoSyncInterval: 15,
     autoSyncDelayOnChanges: 1,
     scope: 'all',
@@ -96,18 +96,18 @@
 
     // Validate service name (required)
     if (!config.name || config.name.trim().length === 0) {
-      errors.push('Service name is required')
+      errors.push('服务名称不能为空')
     } else if (config.name.trim().length > 100) {
-      errors.push('Service name must be less than 100 characters')
+      errors.push('服务名称不能超过 100 个字符')
     }
 
     // Validate auto sync interval (must be positive number)
     if (config.autoSyncInterval !== undefined) {
       if (config.autoSyncInterval <= 0) {
-        errors.push('Auto sync interval must be greater than 0 minutes')
+        errors.push('自动同步间隔必须大于 0 分钟')
       } else if (config.autoSyncInterval > 1440) {
         errors.push(
-          'Auto sync interval must be less than 1440 minutes (24 hours)'
+          '自动同步间隔不能超过 1440 分钟（24 小时）'
         )
       }
     }
@@ -115,9 +115,9 @@
     // Validate auto sync delay (must be positive number)
     if (config.autoSyncDelayOnChanges !== undefined) {
       if (config.autoSyncDelayOnChanges <= 0) {
-        errors.push('Auto sync delay must be greater than 0 minutes')
+        errors.push('变更延迟同步必须大于 0 分钟')
       } else if (config.autoSyncDelayOnChanges > 60) {
-        errors.push('Auto sync delay must be less than 60 minutes')
+        errors.push('变更延迟同步不能超过 60 分钟')
       }
     }
 
@@ -125,9 +125,9 @@
     if (config.mergeStrategy.defaultDate) {
       const dateValue = new Date(config.mergeStrategy.defaultDate)
       if (isNaN(dateValue.getTime())) {
-        errors.push('Default date must be a valid date')
+        errors.push('默认日期格式无效')
       } else if (dateValue > new Date()) {
-        errors.push('Default date cannot be in the future')
+        errors.push('默认日期不能是未来时间')
       }
     }
 
@@ -138,12 +138,12 @@
           !config.credentials.token ||
           config.credentials.token.trim().length === 0
         ) {
-          errors.push('GitHub token is required')
+          errors.push('GitHub 令牌不能为空')
         }
         if (!config.target.repo || config.target.repo.trim().length === 0) {
-          errors.push('Repository name is required')
+          errors.push('仓库名称不能为空')
         } else if (!/^[\w.-]+\/[\w.-]+$/.test(config.target.repo.trim())) {
-          errors.push('Repository name must be in format "owner/repo"')
+          errors.push('仓库名称格式必须为 "owner/repo"')
         }
         // Path and branch are optional for GitHub, no validation needed
         break
@@ -153,24 +153,24 @@
           !config.credentials.username ||
           config.credentials.username.trim().length === 0
         ) {
-          errors.push('WebDAV username is required')
+          errors.push('WebDAV 用户名不能为空')
         }
         if (
           !config.credentials.password ||
           config.credentials.password.trim().length === 0
         ) {
-          errors.push('WebDAV password is required')
+          errors.push('WebDAV 密码不能为空')
         }
         if (!config.target.url || config.target.url.trim().length === 0) {
-          errors.push('WebDAV URL is required')
+          errors.push('WebDAV 地址不能为空')
         } else {
           try {
             const url = new URL(config.target.url.trim())
             if (!['http:', 'https:'].includes(url.protocol)) {
-              errors.push('WebDAV URL must use HTTP or HTTPS protocol')
+              errors.push('WebDAV 地址必须使用 HTTP 或 HTTPS 协议')
             }
           } catch {
-            errors.push('WebDAV URL must be a valid URL')
+            errors.push('WebDAV 地址格式无效')
           }
         }
         // Path is optional for WebDAV, no validation needed
@@ -178,18 +178,18 @@
 
       case 'customApi':
         if (!config.credentials.token && !config.credentials.apiKey) {
-          errors.push('Either token or API key is required for custom API')
+          errors.push('自定义 API 需要提供令牌或 API 密钥')
         }
         if (!config.target.url || config.target.url.trim().length === 0) {
-          errors.push('API base URL is required')
+          errors.push('API 基础地址不能为空')
         } else {
           try {
             const url = new URL(config.target.url.trim())
             if (!['http:', 'https:'].includes(url.protocol)) {
-              errors.push('API URL must use HTTP or HTTPS protocol')
+              errors.push('API 地址必须使用 HTTP 或 HTTPS 协议')
             }
           } catch {
-            errors.push('API URL must be a valid URL')
+            errors.push('API 地址格式无效')
           }
         }
         // Path is optional for Custom API, no validation needed
@@ -200,7 +200,7 @@
         break
 
       default:
-        errors.push('Invalid service type selected')
+        errors.push('无效的服务类型')
         break
     }
 
@@ -325,7 +325,7 @@
 
 <Modal
   bind:isOpen={showForm}
-  title={service ? 'Edit Sync Service' : 'Add Sync Service'}
+  title={service ? '编辑同步服务' : '添加同步服务'}
   onConfirm={handleSubmit}
   {onInputEnter}>
   <div class="space-y-4 p-1">
@@ -335,7 +335,7 @@
         <div class="flex">
           <div class="ml-3">
             <h3 class="text-sm font-medium text-red-800 dark:text-red-200">
-              Please fix the following errors:
+              请修正以下错误：
             </h3>
             <div class="mt-2 text-sm text-red-700 dark:text-red-300">
               <ul class="list-disc space-y-1 pl-5">
@@ -351,25 +351,25 @@
     <div
       class="flex items-center justify-between border-b border-gray-200 pb-4 dark:border-gray-700">
       <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
-        >Service Status</span>
+        >服务状态</span>
       <Switch bind:checked={config.enabled} />
     </div>
 
     <InputField
       bind:value={config.name}
-      placeholder="My Sync Service"
+      placeholder="我的同步服务"
       onInput={clearValidationErrors}>
-      Service Name:
+      服务名称：
     </InputField>
 
     <div class="space-y-3">
       <h3 class="text-lg font-medium text-gray-900 dark:text-white">
-        Sync Server Information
+        同步服务器信息
       </h3>
       <label
         for="service-type"
         class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-        >Service Type:</label>
+        >服务类型：</label>
       <select
         id="service-type"
         bind:value={config.type}
@@ -391,26 +391,26 @@
           bind:value={config.target.url}
           placeholder="https://example.com/dav"
           onInput={clearValidationErrors}>
-          WebDAV URL:
+          WebDAV 地址：
         </InputField>
         <InputField
           bind:value={config.target.path}
           placeholder="utags/bookmarks.json"
           onInput={clearValidationErrors}>
-          Path:
+          路径：
         </InputField>
         <InputField
           bind:value={config.credentials.username}
-          placeholder="Username"
+          placeholder="用户名"
           onInput={clearValidationErrors}>
-          Username:
+          用户名：
         </InputField>
         <InputField
           type="password"
           bind:value={config.credentials.password}
-          placeholder="Password"
+          placeholder="密码"
           onInput={clearValidationErrors}>
-          Password:
+          密码：
         </InputField>
       {/if}
 
@@ -419,26 +419,26 @@
           bind:value={config.target.repo}
           placeholder="owner/repo"
           onInput={clearValidationErrors}>
-          Repository Name:
+          仓库名称：
         </InputField>
         <InputField
           bind:value={config.target.path}
           placeholder="utags/bookmarks.json"
           onInput={clearValidationErrors}>
-          File Path:
+          文件路径：
         </InputField>
         <InputField
           bind:value={config.target.branch}
           placeholder="main"
           onInput={clearValidationErrors}>
-          Branch:
+          分支：
         </InputField>
         <InputField
           type="password"
           bind:value={config.credentials.token}
-          placeholder="GitHub Personal Access Token"
+          placeholder="GitHub 个人访问令牌"
           onInput={clearValidationErrors}>
-          Token:
+          令牌：
         </InputField>
       {/if}
 
@@ -447,43 +447,43 @@
           bind:value={config.target.url}
           placeholder="https://api.example.com/v1"
           onInput={clearValidationErrors}>
-          API Base URL:
+          API 基础地址：
         </InputField>
         <InputField
           bind:value={config.target.path}
           placeholder="utags-bookmarks.json"
           onInput={clearValidationErrors}>
-          Path:
+          路径：
         </InputField>
         <InputField
           bind:value={config.target.authTestEndpoint}
           placeholder="auth/status"
           onInput={clearValidationErrors}>
-          Auth Test Endpoint:
+          认证测试端点：
         </InputField>
         <InputField
           type="password"
           bind:value={config.credentials.token}
-          placeholder="Bearer Token"
+          placeholder="Bearer 令牌"
           onInput={clearValidationErrors}>
-          Token:
+          令牌：
         </InputField>
         <InputField
           type="password"
           bind:value={config.credentials.apiKey}
-          placeholder="API Key"
+          placeholder="API 密钥"
           onInput={clearValidationErrors}>
-          API Key:
+          API 密钥：
         </InputField>
       {/if}
     </div>
     <div class="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
       <h3 class="text-lg font-medium text-gray-900 dark:text-white">
-        Auto-sync Behavior
+        自动同步行为
       </h3>
       <div class="flex items-center justify-between">
         <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
-          >Auto Sync Enabled</span>
+          >启用自动同步</span>
         <Switch bind:checked={config.autoSyncEnabled} />
       </div>
 
@@ -491,31 +491,31 @@
         type="number"
         bind:value={config.autoSyncInterval}
         onInput={clearValidationErrors}>
-        Auto-sync Interval (minutes):
+        自动同步间隔（分钟）：
       </InputField>
 
       <div class="flex items-center justify-between">
         <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
-          >Auto-sync on changes</span>
+          >数据变更时自动同步</span>
         <Switch bind:checked={config.autoSyncOnChanges} />
       </div>
       <InputField
         type="number"
         bind:value={config.autoSyncDelayOnChanges}
         onInput={clearValidationErrors}>
-        Auto-sync Delay on Changes (minutes):
+        变更后延迟同步（分钟）：
       </InputField>
     </div>
 
     <div class="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
       <h3 class="text-lg font-medium text-gray-900 dark:text-white">
-        Merge Strategy
+        合并策略
       </h3>
       <div>
         <label
           for="meta-strategy"
           class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-          >Metadata Merge Strategy:</label>
+          >Metadata 合并策略:</label>
         <select
           id="meta-strategy"
           bind:value={config.mergeStrategy.meta}
@@ -529,7 +529,7 @@
         <label
           for="tags-strategy"
           class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-          >Tags Merge Strategy:</label>
+          >Tags 合并策略:</label>
         <select
           id="tags-strategy"
           bind:value={config.mergeStrategy.tags}
@@ -542,16 +542,16 @@
       <DatePicker
         bind:value={config.mergeStrategy.defaultDate}
         onInput={clearValidationErrors}>
-        Default Date for Invalid Timestamps:
+        无效时间戳默认日期：
       </DatePicker>
       <div class="flex items-center justify-between">
         <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
-          >Prefer Oldest Created Timestamp</span>
+          >优先最早创建时间</span>
         <Switch bind:checked={config.mergeStrategy.preferOldestCreated} />
       </div>
       <div class="flex items-center justify-between">
         <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
-          >Prefer Newest Updated Timestamp</span>
+          >优先最新更新时间</span>
         <Switch bind:checked={config.mergeStrategy.preferNewestUpdated} />
       </div>
     </div>

@@ -33,8 +33,11 @@ export type SyncServiceConfig<
   scope: 'all' | string // Sync scope: 'all' or a collectionId
   lastSyncTimestamp?: number // Timestamp of the last successful remote data sync
   lastDataChangeTimestamp?: number // Timestamp of the last synchronization that detected data changes (local or remote)
+  lastPullTimestamp?: number // Timestamp of the last pull-only operation (for UI labelling)
+  lastPushTimestamp?: number // Timestamp of the last push-only operation (for UI labelling)
   lastSyncLocalDataHash?: string // Hash of local data at the time of last successful sync
   lastSyncMeta?: SyncMetadata // Metadata of the last successful sync
+  lastSyncOperation?: 'pull' | 'push' | 'sync' // Which operation produced the last independent action (for UI labelling)
   enabled: boolean // Whether this sync configuration is active
   // Other service-specific configurations can be added here
 }

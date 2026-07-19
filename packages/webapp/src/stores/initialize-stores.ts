@@ -235,9 +235,10 @@ async function initializeSyncSettings(): Promise<boolean> {
     if (syncServices && syncServices.length === 1) {
       // Clear sample data
       await clearInitialBookmarks()
-
-      const syncManager = new SyncManager()
-      await syncManager.synchronize(syncServices[0].id)
+      // Note: previously we triggered an automatic full sync here. That has
+      // been removed so the user stays in full control — they can now
+      // explicitly use the new Pull / Push buttons in the Sync Settings UI
+      // to fetch or upload data on their own schedule.
     }
 
     return true

@@ -129,6 +129,7 @@ export class SyncManager extends EventEmitter<SyncEvents> {
 
   /**
    * Initiates a synchronization operation with the adapter with the specified configId.
+   * This is the full bidirectional sync: fetch -> merge -> upload.
    * @param configId The ID of the SyncServiceConfig to use for synchronization.
    * @returns A promise that resolves to true if sync is successful, false otherwise.
    */
@@ -163,6 +164,87 @@ export class SyncManager extends EventEmitter<SyncEvents> {
     }
 
     return this._performSyncOperation(adapter, serviceConfig!)
+  }
+
+  /**
+   * Pull (download) remote data only - never uploads.
+   * Fetches the remote data, merges it into local, but does NOT push the result
+   * back to the remote. Useful for manually controlling sync rhythm across
+   * multiple browsers so the user can pull the latest state before deciding
+   * whether to push local changes.
+   *
+   * @param configId The ID of the SyncServiceConfig to pull from.
+   * @returns A promise that resolves to true if pull was successful.
+   */
+  public async pullFromRemote(configId: string): Promise<boolean> {
+    const serviceConfig = getSyncServiceById(this.currentSettings, configId)
+
+    if (!this._canStartSync(serviceConfig, configId)) {
+      return false
+    }
+
+    this.emit('syncInitializing', { serviceId: configId })
+    this.updateStatus({ type: 'initializing' })
+
+    let adapter: SyncAdapter
+    try {
+      adapter = await this.getAdapter(serviceConfig!) // checked in _canStartSync
+    } catch (error: any) {
+      const errMsg = `Sync adapter for ${serviceConfig!.name} (ID: ${configId}) could not be initialized: ${error.message}`
+      console.error(errMsg, error)
+      this.emit('error', { message: errMsg, serviceId: configId, error })
+      this.updateStatus({ type: 'error', error: errMsg })
+      this.emit('syncEnd', {
+        serviceId: configId,
+        status: 'error',
+        error,
+      })
+      return false
+    }
+
+    return this._performPullOperation(adapter, serviceConfig!)
+  }
+
+  /**
+   * Push (upload) local data only - never downloads.
+   * Reads the current local bookmarks, packages them, and uploads to the
+   * remote. Uses the last known remote metadata (lastSyncMeta) as the
+   * expected version to avoid blindly overwriting newer remote changes.
+   *
+   * If the remote has been updated since the last successful sync, the
+   * upload will be rejected by the adapter (e.g. 409/412). The user must
+   * pull first to refresh local state, then push again.
+   *
+   * @param configId The ID of the SyncServiceConfig to push to.
+   * @returns A promise that resolves to true if push was successful.
+   */
+  public async pushToRemote(configId: string): Promise<boolean> {
+    const serviceConfig = getSyncServiceById(this.currentSettings, configId)
+
+    if (!this._canStartSync(serviceConfig, configId)) {
+      return false
+    }
+
+    this.emit('syncInitializing', { serviceId: configId })
+    this.updateStatus({ type: 'initializing' })
+
+    let adapter: SyncAdapter
+    try {
+      adapter = await this.getAdapter(serviceConfig!) // checked in _canStartSync
+    } catch (error: any) {
+      const errMsg = `Sync adapter for ${serviceConfig!.name} (ID: ${configId}) could not be initialized: ${error.message}`
+      console.error(errMsg, error)
+      this.emit('error', { message: errMsg, serviceId: configId, error })
+      this.updateStatus({ type: 'error', error: errMsg })
+      this.emit('syncEnd', {
+        serviceId: configId,
+        status: 'error',
+        error,
+      })
+      return false
+    }
+
+    return this._performPushOperation(adapter, serviceConfig!)
   }
 
   /**
@@ -923,6 +1005,7 @@ export class SyncManager extends EventEmitter<SyncEvents> {
           lastSyncTimestamp: currentSyncTimestamp,
           lastDataChangeTimestamp: currentSyncTimestamp,
           lastSyncMeta: newRemoteMeta,
+          lastSyncOperation: 'sync',
         }
         updateSyncService(updatedServiceConfig)
 
@@ -972,19 +1055,20 @@ export class SyncManager extends EventEmitter<SyncEvents> {
         })
         return false
       }
-    } else {
-      console.log(
-        `[SyncManager] No changes to upload for ${serviceConfig.name}. Sync complete.`
-      )
-      const updatedServiceConfig: SyncServiceConfig = {
-        ...serviceConfig,
-        lastSyncTimestamp: currentSyncTimestamp,
-        lastDataChangeTimestamp: hasChangesForLocal
-          ? currentSyncTimestamp
-          : serviceConfig.lastDataChangeTimestamp,
-        lastSyncMeta: remoteSyncMeta || serviceConfig.lastSyncMeta,
-      }
-      updateSyncService(updatedServiceConfig)
+      } else {
+        console.log(
+          `[SyncManager] No changes to upload for ${serviceConfig.name}. Sync complete.`
+        )
+        const updatedServiceConfig: SyncServiceConfig = {
+          ...serviceConfig,
+          lastSyncTimestamp: currentSyncTimestamp,
+          lastDataChangeTimestamp: hasChangesForLocal
+            ? currentSyncTimestamp
+            : serviceConfig.lastDataChangeTimestamp,
+          lastSyncMeta: remoteSyncMeta || serviceConfig.lastSyncMeta,
+          lastSyncOperation: 'sync',
+        }
+        updateSyncService(updatedServiceConfig)
 
       this.updateStatus({ type: 'success', lastSyncTime: currentSyncTimestamp })
       this.emit('syncSuccess', {
@@ -1093,6 +1177,309 @@ export class SyncManager extends EventEmitter<SyncEvents> {
         '[SyncManager] Failed to persist merge history to localStorage:',
         error
       )
+    }
+  }
+
+  /**
+   * Performs a pull-only sync: fetch remote, merge into local. No upload.
+   * @param adapter - The SyncAdapter to use.
+   * @param serviceConfig - The configuration of the service being synced.
+   * @returns A promise that resolves to true if pull was successful.
+   * @internal
+   */
+  private async _performPullOperation(
+    adapter: SyncAdapter,
+    serviceConfig: SyncServiceConfig
+  ): Promise<boolean> {
+    this.emit('syncStart', { serviceId: serviceConfig.id })
+    let operationSuccessful = false
+
+    try {
+      // Stage 1: Fetch Remote Data
+      const fetchResult = await this._fetchRemoteData(adapter, serviceConfig)
+      if (!fetchResult.success) {
+        return false
+      }
+
+      const { remoteBookmarks, remoteStoreMeta, remoteSyncMeta } = fetchResult
+
+      // Stage 2: Merge Data (this also applies local updates via bookmarkStorage)
+      const currentSyncTimestamp = Date.now()
+      const mergeResult = await this._mergeData(
+        remoteBookmarks,
+        serviceConfig,
+        this.defaultMergeStrategy,
+        currentSyncTimestamp,
+        remoteSyncMeta
+      )
+      if (!mergeResult.success) {
+        return false
+      }
+
+      const {
+        mergedBookmarks,
+        hasChangesForRemote,
+        hasChangesForLocal,
+        updatesForLocal,
+        updatesForRemote,
+        localDeletions,
+        remoteDeletions,
+      } = mergeResult
+
+      // Stage 3 (pull only): Update lastSyncMeta/timestamps but DO NOT upload.
+      // We still record that we are now in sync with the remote version we
+      // just pulled, so a later push uses the correct expected remote meta.
+      const updatedServiceConfig: SyncServiceConfig = {
+        ...serviceConfig,
+        lastPullTimestamp: currentSyncTimestamp,
+        lastDataChangeTimestamp: hasChangesForLocal
+          ? currentSyncTimestamp
+          : serviceConfig.lastDataChangeTimestamp,
+        lastSyncMeta: remoteSyncMeta || serviceConfig.lastSyncMeta,
+        lastSyncOperation: 'pull',
+      }
+      updateSyncService(updatedServiceConfig)
+
+      if (hasChangesForRemote || hasChangesForLocal) {
+        this.logMergeHistory(
+          serviceConfig,
+          hasChangesForRemote!,
+          hasChangesForLocal!,
+          currentSyncTimestamp,
+          updatesForLocal!,
+          updatesForRemote!,
+          localDeletions!,
+          remoteDeletions!,
+          remoteSyncMeta
+        )
+      }
+
+      this.updateStatus({
+        type: 'success',
+        lastSyncTime: currentSyncTimestamp,
+      })
+      this.emit('syncSuccess', {
+        serviceId: serviceConfig.id,
+        noUploadNeeded: true,
+      })
+      operationSuccessful = true
+      return true
+    } catch (error: any) {
+      console.error(`Pull failed for ${serviceConfig.name}:`, error)
+      const errorMessage = `Pull failed for ${serviceConfig.name}: ${error.message}`
+      this.emit('error', {
+        message: errorMessage,
+        serviceId: serviceConfig.id,
+        error,
+      })
+      this.updateStatus({
+        type: 'error',
+        error: errorMessage,
+        lastAttemptTime: Date.now(),
+      })
+      return false
+    } finally {
+      const finalEventType: 'success' | 'error' | 'conflict' =
+        operationSuccessful && this.currentSyncStatus.type === 'success'
+          ? 'success'
+          : this.currentSyncStatus.type === 'conflict'
+            ? 'conflict'
+            : 'error'
+
+      this.emit('syncEnd', {
+        serviceId: serviceConfig.id,
+        status: finalEventType,
+        error:
+          finalEventType === 'success'
+            ? undefined
+            : (this.currentSyncStatus as any).error ||
+              (this.currentSyncStatus as any).details,
+      })
+
+      if (finalEventType === 'success') {
+        this.updateStatus({
+          type: 'idle',
+          lastSyncTime: (this.currentSyncStatus as any).lastSyncTime,
+        })
+      } else if (
+        !this.isSyncInProgress() &&
+        this.currentSyncStatus.type !== 'error' &&
+        this.currentSyncStatus.type !== 'conflict'
+      ) {
+        this.updateStatus({ type: 'idle' })
+      }
+    }
+  }
+
+  /**
+   * Performs a push-only sync: read local data, upload it. No remote fetch.
+   * Uses the service's `lastSyncMeta` as the expected remote meta for
+   * optimistic locking so a stale local state cannot silently overwrite
+   * remote changes made by another device.
+   * @param adapter - The SyncAdapter to use.
+   * @param serviceConfig - The configuration of the service being synced.
+   * @returns A promise that resolves to true if push was successful.
+   * @internal
+   */
+  private async _performPushOperation(
+    adapter: SyncAdapter,
+    serviceConfig: SyncServiceConfig
+  ): Promise<boolean> {
+    this.emit('syncStart', { serviceId: serviceConfig.id })
+    let operationSuccessful = false
+
+    const operationTimestamp = Date.now()
+    const currentSyncTimestamp = operationTimestamp
+
+    try {
+      this.updateStatus({ type: 'uploading' })
+      console.log(
+        `[SyncManager] Pushing local data for ${serviceConfig.name}...`
+      )
+
+      const localData = await bookmarkStorage.getBookmarksData()
+
+      const sortedBookmarks = Object.fromEntries(
+        sortBookmarks(Object.entries(localData), 'createdDesc')
+      )
+
+      const stats = calculateBookmarkStatsFromData(sortedBookmarks)
+      const deviceInfo = getDeviceInfo()
+
+      // Read current remote meta to use as optimistic-lock base.
+      // Fall back to lastSyncMeta if remote is unavailable; the adapter
+      // will reject the upload if the version does not match.
+      let remoteSyncMeta: SyncMetadata | undefined =
+        serviceConfig.lastSyncMeta
+      try {
+        const liveRemoteMeta = await adapter.getRemoteMetadata()
+        if (liveRemoteMeta) {
+          remoteSyncMeta = liveRemoteMeta
+        }
+      } catch (error) {
+        console.warn(
+          `[SyncManager] Could not refresh remote meta before push for ${serviceConfig.name}; using cached lastSyncMeta.`,
+          error
+        )
+      }
+
+      const bookmarksStore: BookmarksStore = {
+        data: sortedBookmarks,
+        meta: {
+          databaseVersion: CURRENT_DATABASE_VERSION,
+          created:
+            serviceConfig.lastSyncMeta?.timestamp || operationTimestamp,
+          updated: operationTimestamp,
+          stats,
+          lastUploadDevice: {
+            deviceId: deviceInfo.deviceId,
+            browser: deviceInfo.browser,
+            os: deviceInfo.os,
+            deviceType: deviceInfo.deviceType,
+            uploadTimestamp: operationTimestamp,
+            userAgent: navigator.userAgent,
+            origin: globalThis.location.origin,
+            lastDataChangeTimestamp: serviceConfig.lastDataChangeTimestamp,
+            currentSyncTimestamp,
+          },
+        },
+      }
+
+      const newRemoteMeta = await adapter.upload(
+        prettyPrintJson(normalizeBookmarkData(bookmarksStore)),
+        remoteSyncMeta
+      )
+
+      const updatedServiceConfig: SyncServiceConfig = {
+        ...serviceConfig,
+        lastPushTimestamp: currentSyncTimestamp,
+        lastDataChangeTimestamp: currentSyncTimestamp,
+        lastSyncMeta: newRemoteMeta,
+        lastSyncOperation: 'push',
+      }
+      updateSyncService(updatedServiceConfig)
+
+      this.updateStatus({
+        type: 'success',
+        lastSyncTime: currentSyncTimestamp,
+      })
+      this.emit('syncSuccess', {
+        serviceId: serviceConfig.id,
+      })
+      console.log(
+        `[SyncManager] Push successful for ${serviceConfig.name}.`
+      )
+      operationSuccessful = true
+      return true
+    } catch (error: any) {
+      if (
+        error.name === 'UploadConflictError' ||
+        (error.status && [409, 412].includes(error.status))
+      ) {
+        console.warn(
+          `Push conflict detected for ${serviceConfig.name}:`,
+          error.message
+        )
+        const conflictDetails = error.details || error.message
+        this.updateStatus({
+          type: 'conflict',
+          details: conflictDetails,
+          lastAttemptTime: operationTimestamp,
+        })
+        this.emit('syncConflict', {
+          serviceId: serviceConfig.id,
+          details: conflictDetails,
+          error,
+        })
+        return false
+      }
+
+      console.error(
+        `Error pushing data for ${serviceConfig.name}:`,
+        error
+      )
+      const errorMessage = `Failed to push data for ${serviceConfig.name}: ${error.message}`
+      this.emit('error', {
+        message: errorMessage,
+        serviceId: serviceConfig.id,
+        error,
+      })
+      this.updateStatus({
+        type: 'error',
+        error: errorMessage,
+        lastAttemptTime: operationTimestamp,
+      })
+      return false
+    } finally {
+      const finalEventType: 'success' | 'error' | 'conflict' =
+        operationSuccessful && this.currentSyncStatus.type === 'success'
+          ? 'success'
+          : this.currentSyncStatus.type === 'conflict'
+            ? 'conflict'
+            : 'error'
+
+      this.emit('syncEnd', {
+        serviceId: serviceConfig.id,
+        status: finalEventType,
+        error:
+          finalEventType === 'success'
+            ? undefined
+            : (this.currentSyncStatus as any).error ||
+              (this.currentSyncStatus as any).details,
+      })
+
+      if (finalEventType === 'success') {
+        this.updateStatus({
+          type: 'idle',
+          lastSyncTime: (this.currentSyncStatus as any).lastSyncTime,
+        })
+      } else if (
+        !this.isSyncInProgress() &&
+        this.currentSyncStatus.type !== 'error' &&
+        this.currentSyncStatus.type !== 'conflict'
+      ) {
+        this.updateStatus({ type: 'idle' })
+      }
     }
   }
 

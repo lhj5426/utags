@@ -215,9 +215,9 @@ export function promoteDiscoveredTarget(serviceId: string) {
       defaultDate: Date.now(),
     },
     enabled: true, // Enable by default
-    autoSyncEnabled: true, // Enable by default
+    autoSyncEnabled: true, // Auto sync for local script (single browser, no cross-browser conflict)
     autoSyncInterval: 1, // 1 minute
-    autoSyncOnChanges: true,
+    autoSyncOnChanges: true, // Immediately sync when script data changes
     autoSyncDelayOnChanges: 0.2, // 12 seconds
     lastSyncTimestamp: 0,
     lastDataChangeTimestamp: 0,
