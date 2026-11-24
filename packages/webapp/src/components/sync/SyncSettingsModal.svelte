@@ -20,12 +20,14 @@
     Plus,
     ArrowDownToLine,
     ArrowUpFromLine,
+    CircleAlert,
   } from 'lucide-svelte'
   import ConfirmModal from '../ConfirmModal.svelte'
   import {
     currentSyncingService,
     currentSyncOperation,
     syncProgress,
+    syncError,
   } from '../../stores/sync-status-store.js'
 
   let { showSyncSettings = $bindable() } = $props<{
@@ -323,6 +325,15 @@
                     opClasses.bar}
                   style="width: {$syncProgress.progress}%"></div>
               </div>
+            </div>
+          {/if}
+
+          <!-- Sync error hint -->
+          {#if $syncError && (!$syncError.serviceId || $syncError.serviceId === service.id)}
+            <div
+              class="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-2.5 text-xs leading-relaxed text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+              <CircleAlert size={14} class="mt-0.5 shrink-0" />
+              <span>{$syncError.message}</span>
             </div>
           {/if}
         </li>

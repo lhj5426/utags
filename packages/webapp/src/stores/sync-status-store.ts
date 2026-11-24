@@ -25,6 +25,32 @@ export const syncProgress = writable<{
   speed: string // e.g. "1.2 MB/s"
 } | null>(null)
 
+// ---- Error store ----------------------------------------------------------
+export const syncError = writable<{
+  serviceId?: string
+  message: string
+} | null>(null)
+
+/** Turn raw adapter errors into something a user can act on. */
+function humanizeSyncError(message: string): string {
+  if (/409|conflict/i.test(message)) {
+    return '远程文件已被改动（409 冲突）'
+  }
+  if (/401|bad credentials/i.test(message)) {
+    return 'GitHub 认证失败（401 Bad credentials）'
+  }
+  if (/403|resource not accessible/i.test(message)) {
+    return 'GitHub 拒绝访问（403）'
+  }
+  if (/422/i.test(message)) {
+    return 'GitHub 拒绝了这次提交（422）'
+  }
+  if (/failed to fetch|networkerror|err_/i.test(message)) {
+    return '网络请求失败'
+  }
+  return message
+}
+
 function initializeSyncListeners() {
   syncManager.on('syncInitializing', (data: { serviceId: string }) => {
     currentSyncingService.set(data.serviceId)
@@ -32,9 +58,20 @@ function initializeSyncListeners() {
 
   syncManager.on('syncStart', (data: { serviceId: string }) => {
     currentSyncingService.set(data.serviceId)
+    syncError.set(null)
     lastBytes = 0
     lastSpeedTime = Date.now()
   })
+
+  syncManager.on(
+    'error',
+    (data: { message: string; serviceId?: string }) => {
+      syncError.set({
+        serviceId: data.serviceId,
+        message: humanizeSyncError(data.message),
+      })
+    }
+  )
 
   syncManager.on('syncEnd', (data: { serviceId: string }) => {
     currentSyncingService.update((c) =>

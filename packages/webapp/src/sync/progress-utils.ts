@@ -67,10 +67,15 @@ export async function fetchWithDownloadProgress(
 }
 
 /**
- * Upload with real progress via ReadableStream. The body is split into
- * 1KB chunks and fed through a ReadableStream, so the fetch()'s network
- * layer naturally backpressures. A 100ms timer reports the current byte
- * count to the UI.
+ * Upload with real byte-level progress via XMLHttpRequest.
+ *
+ * 为什么用 XHR 而不是 fetch：
+ * - fetch 在不使用流式请求体时，无法报告请求体的发送进度；
+ * - 流式请求体虽然能拿到进度，但它没有 Content-Length、强制 chunked、
+ *   只能在 HTTP/2 上发送、必触发 CORS 预检，经过代理 / 企业网关时会把
+ *   认证信息弄坏，导致凭证有效却被 GitHub 返回 401 "Bad credentials"；
+ * - XHR 的 upload.onprogress 用普通字符串请求体就能拿到真实的已发送字节数，
+ *   走的是和 GET 一样的标准 HTTP 通路，兼容性最好。
  */
 export async function fetchWithUploadProgress(
   url: string,
@@ -78,43 +83,67 @@ export async function fetchWithUploadProgress(
   body: string,
   onProgress: ProgressCallback
 ): Promise<Response> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(body)
-  const total = data.length
-  let sent = 0
-  const CHUNK = 1024
+  const total = new TextEncoder().encode(body).byteLength
 
-  const timer = setInterval(() => {
-    onProgress(sent, total)
-  }, 100)
-  const cleanup = () => clearInterval(timer)
+  return await new Promise<Response>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open(init.method ?? 'POST', url, true)
 
-  const stream = new ReadableStream({
-    async pull(controller) {
-      if (sent >= total) {
-        controller.close()
-        cleanup()
-        onProgress(total, total)
-        return
+    const headers = (init.headers ?? {}) as Record<string, string>
+    for (const key of Object.keys(headers)) {
+      try {
+        xhr.setRequestHeader(key, String(headers[key]))
+      } catch {
+        // 浏览器禁止设置的请求头，跳过
       }
-      const end = Math.min(sent + CHUNK, total)
-      controller.enqueue(data.slice(sent, end))
-      sent = end
-      await new Promise((r) => setTimeout(r, 0))
-    },
-    cancel() {
-      cleanup()
-    },
-  })
+    }
 
-  try {
-    return await fetch(url, {
-      ...init,
-      body: stream,
-      duplex: 'half',
-    } as RequestInit)
-  } catch (e) {
-    cleanup()
-    throw e
-  }
+    // 真实上传进度：event.loaded 为已发送字节数（含请求头开销，可能略大于 total）
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) {
+        onProgress(Math.min(event.loaded, event.total || total), event.total || total)
+      }
+    })
+
+    xhr.addEventListener('load', () => {
+      const responseHeaders = new Headers()
+      const raw = xhr.getAllResponseHeaders().trim()
+      if (raw) {
+        for (const line of raw.split(/[\r\n]+/)) {
+          const index = line.indexOf(':')
+          if (index > 0) {
+            responseHeaders.append(
+              line.slice(0, index).trim(),
+              line.slice(index + 1).trim()
+            )
+          }
+        }
+      }
+
+      onProgress(total, total)
+      resolve(
+        new Response(xhr.responseText, {
+          status: xhr.status,
+          statusText: xhr.statusText,
+          headers: responseHeaders,
+        })
+      )
+    })
+
+    xhr.addEventListener('error', () => {
+      reject(new TypeError('Failed to fetch'))
+    })
+    xhr.addEventListener('timeout', () => {
+      reject(new TypeError('Failed to fetch'))
+    })
+    xhr.addEventListener('abort', () => {
+      reject(new DOMException('The operation was aborted.', 'AbortError'))
+    })
+
+    init.signal?.addEventListener('abort', () => {
+      xhr.abort()
+    })
+
+    xhr.send(body)
+  })
 }
